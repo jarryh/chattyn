@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- Only for the tray icon (NotifyIcon); WPF has none built in. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyTitle>Chattyn</AssemblyTitle>
+    <Product>Chattyn</Product>
+    <Description>RP writing helper overlay for World of Warcraft</Description>
+    <Version>0.1.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Needed by the LibraryImport source generator for the few user32 calls in Interop/. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- WFO0003 is a WinForms hint; the per-monitor DPI entry in app.manifest is what WPF needs. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keep WinForms/GDI names out of the global namespace so they don't clash with WPF types. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\wow-terms.lex" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Chattyn.Core\Chattyn.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+</Project>
