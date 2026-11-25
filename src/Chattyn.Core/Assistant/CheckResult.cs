@@ -3,8 +3,22 @@ using System.Text.Json.Serialization;
 
 namespace Chattyn.Core.Assistant;
 
+/// <summary>How the checked post was written.</summary>
+public enum InputLanguage
+{
+    /// <summary>In English, mistakes included.</summary>
+    English,
+
+    /// <summary>In English with some words left in the writer's own language.</summary>
+    Mixed,
+
+    /// <summary>Entirely or mostly in the writer's own language; the result is a translation.</summary>
+    Native,
+}
+
 /// <summary>What Claude returns for one checked post.</summary>
 public sealed record CheckResult(
+    InputLanguage InputLanguage,
     string Corrected,
     string Natural,
     IReadOnlyList<CheckNote> Notes,
@@ -22,13 +36,22 @@ public sealed record CheckResult(
         var dto = JsonSerializer.Deserialize<Dto>(json, JsonOptions)
                   ?? throw new JsonException("Empty response.");
         return new CheckResult(
+            ParseInputLanguage(dto.InputLanguage),
             dto.Corrected ?? "",
             dto.Natural ?? "",
             dto.Notes ?? [],
             dto.Translations ?? []);
     }
 
+    private static InputLanguage ParseInputLanguage(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "mixed" => InputLanguage.Mixed,
+        "native" => InputLanguage.Native,
+        _ => InputLanguage.English,
+    };
+
     private sealed record Dto(
+        string? InputLanguage,
         string? Corrected,
         string? Natural,
         List<CheckNote>? Notes,
@@ -42,14 +65,23 @@ public sealed record CheckNote(string Kind, string Original, string Suggestion, 
     public string KindLabel => Kind.Replace('_', ' ');
 }
 
-/// <summary>Translation of the writer's own text and of the natural rewrite into one language.</summary>
-public sealed record CheckTranslation(string Language, string OriginalMeaning, string NaturalMeaning);
+/// <summary>
+/// The post's meaning in one of the writer's languages: what they wrote and what the natural
+/// version says. <see cref="OriginalMeaning"/> is empty when the post was already in that language.
+/// </summary>
+public sealed record CheckTranslation(string Language, string OriginalMeaning, string NaturalMeaning)
+{
+    [JsonIgnore]
+    public bool HasOriginalMeaning => !string.IsNullOrWhiteSpace(OriginalMeaning);
+}
 
 /// <summary>JSON schema sent as the structured output format, so the reply always parses.</summary>
 public static class CheckResultSchema
 {
+    public static readonly IReadOnlyList<string> InputLanguages = ["english", "mixed", "native"];
+
     public static readonly IReadOnlyList<string> NoteKinds =
-        ["spelling", "grammar", "word_choice", "punctuation", "style", "filled_in"];
+        ["spelling", "grammar", "word_choice", "punctuation", "style", "filled_in", "vocabulary"];
 
     public static Dictionary<string, JsonElement> Build()
     {
@@ -59,6 +91,7 @@ public static class CheckResultSchema
             type = "object",
             properties = new
             {
+                input_language = new { type = "string", @enum = InputLanguages },
                 corrected = str,
                 natural = str,
                 notes = new
@@ -95,7 +128,7 @@ public static class CheckResultSchema
                     },
                 },
             },
-            required = new[] { "corrected", "natural", "notes", "translations" },
+            required = new[] { "input_language", "corrected", "natural", "notes", "translations" },
             additionalProperties = false,
         };
 

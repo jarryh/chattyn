@@ -10,15 +10,23 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace Chattyn.ViewModels;
 
+/// <summary>An entry of the character picker; <see cref="Id"/> is null for "No character".</summary>
+public sealed record CharacterOption(string? Id, string Name);
+
 public sealed partial class MainViewModel : ObservableObject
 {
+    private static readonly CharacterOption NoCharacter = new(null, "No character");
+
     private readonly IWritingAssistant _assistant;
     private readonly Func<AppSettings> _settings;
     private readonly DispatcherTimer _autoCheckTimer;
     private readonly Queue<string> _pendingParts = new();
     private CancellationTokenSource? _checkCts;
     private string? _checkedText;
+    private string? _checkedCharacterId;
     private int _totalParts;
+    private bool _selectingForThisPostOnly;
+    private bool _refreshingCharacters;
 
     public MainViewModel(IWritingAssistant assistant, Func<AppSettings> settings)
     {
@@ -29,14 +37,30 @@ public sealed partial class MainViewModel : ObservableObject
         _autoCheckTimer.Tick += (_, _) =>
         {
             _autoCheckTimer.Stop();
-            if (!IsBusy && Input.Trim().Length >= 3 && Input.Trim() != _checkedText) CheckCommand.Execute(null);
+            // No "busy" guard: CheckAsync cancels a running check, so newer text always wins.
+            if (Input.Trim().Length >= 3 && Input.Trim() != _checkedText) CheckCommand.Execute(null);
         };
+        RefreshCharacters();
         UpdateByteInfo();
     }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsStale))]
+    [NotifyPropertyChangedFor(nameof(StaleMessage))]
     private string _input = "";
+
+    /// <summary>"No character" followed by the user's characters.</summary>
+    public ObservableCollection<CharacterOption> Characters { get; } = [];
+
+    /// <summary>The character the next check is written for.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HeaderTitle))]
+    [NotifyPropertyChangedFor(nameof(IsStale))]
+    [NotifyPropertyChangedFor(nameof(StaleMessage))]
+    private CharacterOption? _selectedCharacter = NoCharacter; // the picker sets null while its list is rebuilt
+
+    /// <summary>App name plus the active character, so it is visible in the collapsed bar too.</summary>
+    public string HeaderTitle => SelectedCharacter?.Id is null ? "Chattyn" : $"Chattyn - {SelectedCharacter.Name}";
 
     [ObservableProperty] private string _corrected = "";
     [ObservableProperty] private string _natural = "";
@@ -44,6 +68,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsStale))]
+    [NotifyPropertyChangedFor(nameof(StaleMessage))]
     private bool _hasResult;
 
     [ObservableProperty] private bool _isBusy;
@@ -54,11 +79,34 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _hasNotes;
     [ObservableProperty] private bool _hasTranslations;
 
+    /// <summary>How the last checked post was written; decides the labels of the second version.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SecondLabel))]
+    [NotifyPropertyChangedFor(nameof(SecondChipLabel))]
+    private InputLanguage _inputLanguage;
+
+    /// <summary>"Corrected" for English posts; a close translation when the post was not in English.</summary>
+    public string SecondLabel => InputLanguage == InputLanguage.Native ? "Literal translation" : "Corrected";
+
+    public string SecondChipLabel => InputLanguage == InputLanguage.Native ? "Literal (Alt+2)" : "Corrected (Alt+2)";
+
     public ObservableCollection<CheckNote> Notes { get; } = [];
     public ObservableCollection<CheckTranslation> Translations { get; } = [];
 
     /// <summary>The input changed after the last check, so the suggestions belong to older text.</summary>
-    public bool IsStale => HasResult && Input.Trim() != _checkedText;
+    private bool IsTextStale => HasResult && Input.Trim() != _checkedText;
+
+    /// <summary>The suggestions were written for a different character than the one now selected.</summary>
+    private bool IsCharacterStale => HasResult && SelectedCharacter?.Id != _checkedCharacterId;
+
+    /// <summary>The shown result no longer matches the input or the character; it is dimmed with a hint.</summary>
+    public bool IsStale => IsTextStale || IsCharacterStale;
+
+    public string StaleMessage => IsTextStale
+        ? "Your text changed after this check. Ctrl+Enter checks again; Enter in the input box now copies your own text."
+        : IsCharacterStale
+            ? "This result was written for another character. Ctrl+Enter checks again for the one selected now."
+            : "";
 
     /// <summary>True after a copy until the user edits again: reopening then selects the old text for replacing.</summary>
     public bool CopiedSinceLastEdit { get; private set; }
@@ -78,7 +126,50 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    partial void OnSelectedChanged(PostChoice value) => _settings().PreferredChoice = value;
+    partial void OnSelectedChanged(PostChoice value)
+    {
+        if (!_selectingForThisPostOnly) _settings().PreferredChoice = value;
+    }
+
+    partial void OnSelectedCharacterChanged(CharacterOption? value)
+    {
+        if (_refreshingCharacters || value is null) return;
+        _settings().ActiveCharacterId = value.Id;
+        SetStatus(value.Id is null
+            ? "No character: neutral tone."
+            : $"Writing as {value.Name}." + (IsCharacterStale ? " Ctrl+Enter checks again." : ""));
+    }
+
+    /// <summary>Alt+C: the next entry of the character picker, wrapping around.</summary>
+    public void CycleCharacter()
+    {
+        if (Characters.Count < 2)
+        {
+            SetStatus("No characters yet. Add one in Settings.");
+            return;
+        }
+        var index = Characters.IndexOf(SelectedCharacter ?? NoCharacter);
+        SelectedCharacter = Characters[(index + 1) % Characters.Count];
+    }
+
+    /// <summary>Rebuilds the picker from settings and selects the active character.</summary>
+    private void RefreshCharacters()
+    {
+        var settings = _settings();
+        _refreshingCharacters = true;
+        try
+        {
+            Characters.Clear();
+            Characters.Add(NoCharacter);
+            foreach (var character in settings.Characters)
+                Characters.Add(new CharacterOption(character.Id, character.DisplayName));
+            SelectedCharacter = Characters.FirstOrDefault(c => c.Id == settings.ActiveCharacterId) ?? NoCharacter;
+        }
+        finally
+        {
+            _refreshingCharacters = false;
+        }
+    }
 
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task CheckAsync()
@@ -98,12 +189,15 @@ public sealed partial class MainViewModel : ObservableObject
         IsBusy = true;
         SetStatus("Checking...");
         var stopwatch = Stopwatch.StartNew();
+        var options = BuildOptions();
         try
         {
-            var result = await _assistant.CheckAsync(text, BuildOptions(), cts.Token);
+            var result = await _assistant.CheckAsync(text, options, cts.Token);
             if (cts.IsCancellationRequested) return;
 
             _checkedText = text;
+            _checkedCharacterId = options.Character?.Id;
+            InputLanguage = result.InputLanguage;
             Corrected = result.Corrected;
             Natural = result.Natural;
             Replace(Notes, result.Notes);
@@ -112,15 +206,26 @@ public sealed partial class MainViewModel : ObservableObject
             HasTranslations = Translations.Count > 0;
             HasResult = true;
             OnPropertyChanged(nameof(IsStale));
+            OnPropertyChanged(nameof(StaleMessage));
 
-            var seconds = stopwatch.Elapsed.TotalSeconds;
-            SetStatus(result.Notes.Count == 0
-                ? $"Looks good. ({seconds:0.0} s)"
-                : $"{result.Notes.Count} suggestion{(result.Notes.Count == 1 ? "" : "s")}. Enter copies the {Selected.ToString().ToLowerInvariant()} version. ({seconds:0.0} s)");
+            // "Mine" would paste non-English text into the chat. Switch for this post only;
+            // the saved preference stays as the user set it.
+            if (result.InputLanguage != InputLanguage.English && Selected == PostChoice.Mine)
+            {
+                _selectingForThisPostOnly = true;
+                Selected = PostChoice.Natural;
+                _selectingForThisPostOnly = false;
+            }
+
+            SetStatus(DescribeResult(result, stopwatch.Elapsed.TotalSeconds));
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             // Replaced by a newer check.
+        }
+        catch (WritingAssistantException) when (cts.IsCancellationRequested)
+        {
+            // Also replaced: a newer check owns the status line now.
         }
         catch (WritingAssistantException ex)
         {
@@ -143,7 +248,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public void CopyAndReturn(PostChoice? source)
     {
-        var choice = source ?? (HasResult && !IsStale ? Selected : PostChoice.Mine);
+        // A result for another character is still a valid version of this text, so only a
+        // changed text falls back to the writer's own words.
+        var choice = source ?? (HasResult && !IsTextStale ? Selected : PostChoice.Mine);
         var text = TextFor(choice);
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -163,7 +270,7 @@ public sealed partial class MainViewModel : ObservableObject
         _totalParts = parts.Count;
 
         if (!CopyNextPart()) return;
-        if (choice == PostChoice.Mine && source is null && HasResult && IsStale)
+        if (choice == PostChoice.Mine && source is null && IsTextStale)
             SetStatus(Status + " (your own text: it changed after the check)");
 
         CopiedSinceLastEdit = true;
@@ -197,7 +304,7 @@ public sealed partial class MainViewModel : ObservableObject
         SetStatus(_totalParts == 1
             ? "Copied. Paste it in WoW chat with Ctrl+V."
             : HasPendingParts
-                ? $"Part {number}/{_totalParts} copied. After sending it, press {_settings().NextPartHotkey} for the next part."
+                ? $"Part {number}/{_totalParts} copied. Next part: {_settings().NextPartHotkey}"
                 : $"Part {number}/{_totalParts} copied (last part).");
         return true;
     }
@@ -208,11 +315,32 @@ public sealed partial class MainViewModel : ObservableObject
         StatusIsError = isError;
     }
 
-    /// <summary>Call after settings change: byte limit and auto-check may differ.</summary>
+    /// <summary>Call after settings change: characters, byte limit and auto-check may differ.</summary>
     public void OnSettingsChanged()
     {
+        RefreshCharacters();
         UpdateByteInfo();
         if (!_settings().AutoCheck) _autoCheckTimer.Stop();
+    }
+
+    private string DescribeResult(CheckResult result, double seconds)
+    {
+        var version = Selected switch
+        {
+            PostChoice.Natural => "the natural version",
+            PostChoice.Corrected => result.InputLanguage == InputLanguage.Native ? "the literal translation" : "the corrected version",
+            _ => "your own text",
+        };
+        var copyHint = $"Enter copies {version}. ({seconds:0.0} s)";
+        var count = result.Notes.Count;
+
+        return result.InputLanguage switch
+        {
+            InputLanguage.Native => $"Translated to English. {copyHint}",
+            InputLanguage.Mixed => $"Filled in the English words. {copyHint}",
+            _ when count == 0 => $"Looks good. {copyHint}",
+            _ => $"{count} suggestion{(count == 1 ? "" : "s")}. {copyHint}",
+        };
     }
 
     private string TextFor(PostChoice choice) => choice switch
@@ -246,7 +374,7 @@ public sealed partial class MainViewModel : ObservableObject
     private AssistantOptions BuildOptions()
     {
         var s = _settings();
-        return new AssistantOptions(s.Model, s.TranslationLanguages, s.ExplanationLanguage, s.CharacterNotes, s.LoreWords);
+        return new AssistantOptions(s.Model, s.TranslationLanguages, s.ExplanationLanguage, s.ActiveCharacter, s.LoreWords);
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items)

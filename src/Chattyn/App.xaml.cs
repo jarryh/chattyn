@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Chattyn.Core.Assistant;
@@ -10,13 +11,17 @@ namespace Chattyn;
 
 public partial class App : Application
 {
+    private const string ToggleHotkeyName = "toggle";
+    private const string NextPartHotkeyName = "next-part";
+
     private Mutex? _singleInstance;
-    private SettingsStore _store = null!;
-    private AppSettings _settings = null!;
+    private SettingsStore? _store;
+    private AppSettings _settings = AppSettings.CreateDefault();
     private ApiKeyLookup _apiKey = new(null, null);
     private ClaudeWritingAssistant? _assistant;
-    private MainViewModel _vm = null!;
-    private MainWindow _main = null!;
+    private FocusService? _focus;
+    private MainViewModel? _vm;
+    private MainWindow? _main;
     private TrayIcon? _tray;
     private HotkeyService? _hotkeys;
     private SettingsWindow? _settingsWindow;
@@ -36,17 +41,38 @@ public partial class App : Application
         }
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        DispatcherUnhandledException += OnDispatcherUnhandledException;
 
+        // A failure here must end the process: with no window and no tray icon there would be
+        // nothing to quit it with, and the mutex would block every later start.
+        try
+        {
+            Initialize();
+        }
+        catch (Exception ex)
+        {
+            LogError(ex);
+            MessageBox.Show(
+                "Chattyn could not start:\n\n" + ex.Message + "\n\nDetails are in %APPDATA%\\Chattyn\\error.log.",
+                "Chattyn", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+            return;
+        }
+
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+    }
+
+    private void Initialize()
+    {
         _store = new SettingsStore(SettingsStore.DefaultPath);
         (_settings, var isFirstRun) = _store.Load();
         ReloadApiKey();
 
-        // If the key is missing, look again on each check, so a freshly created .env just works.
-        _assistant = new ClaudeWritingAssistant(() => _apiKey.Found ? _apiKey.Key : ReloadApiKey().Key);
-        var focus = new FocusService();
+        // Read the key again for every check: editing .env takes effect without a restart.
+        _assistant = new ClaudeWritingAssistant(() => ReloadApiKey().Key);
+        _focus = new FocusService();
         _vm = new MainViewModel(_assistant, () => _settings);
-        _main = new MainWindow(_vm, focus, () => _settings);
+        _vm.PropertyChanged += OnViewModelPropertyChanged;
+        _main = new MainWindow(_vm, _focus, () => _settings);
         _main.SettingsRequested += (_, _) => OpenSettings();
         _main.Show();
 
@@ -56,18 +82,12 @@ public partial class App : Application
             onSettings: OpenSettings,
             onQuit: Quit);
 
-        ApplySettings();
+        if (ApplySettings())
+            ShowIdleStatus($"Ready. {_settings.ToggleHotkey} opens Chattyn from the game.");
 
-        if (!_apiKey.Found)
-            _vm.SetStatus("No API key yet: open Settings and click \"Create / open .env\".", isError: true);
-        else
-            _vm.SetStatus($"Ready. {_settings.ToggleHotkey} opens Chattyn from the game.");
-
-        if (isFirstRun)
-        {
-            SaveSettings();
-            OpenSettings();
-        }
+        // Always save once: writes first-run defaults, or the upgraded format of an older file.
+        SaveSettings();
+        if (isFirstRun) OpenSettings();
     }
 
     private ApiKeyLookup ReloadApiKey()
@@ -76,19 +96,33 @@ public partial class App : Application
         return _apiKey;
     }
 
-    /// <summary>Pushes current settings into hotkeys, spell check, opacity and the Run key.</summary>
-    private void ApplySettings()
+    /// <summary>The status when nothing is wrong: a reminder about the missing key, or the given message.</summary>
+    private void ShowIdleStatus(string message)
+    {
+        if (_apiKey.Found) _vm!.SetStatus(message);
+        else _vm!.SetStatus("No API key yet: open Settings and click \"Create / open .env\".", isError: true);
+    }
+
+    /// <summary>
+    /// Pushes current settings into hotkeys, spell check, opacity and the Run key.
+    /// Returns false, with the first problem in the status line, when something could not be applied.
+    /// </summary>
+    private bool ApplySettings()
     {
         var problems = new List<string>();
 
-        _hotkeys!.UnregisterAll();
-        if (_hotkeys.Register(_settings.ToggleHotkey, _main.ToggleFromHotkey) is { } toggleError) problems.Add(toggleError);
-        if (_hotkeys.Register(_settings.NextPartHotkey, () => _vm.CopyNextPart()) is { } nextError) problems.Add(nextError);
+        if (_hotkeys!.Register(ToggleHotkeyName, _settings.ToggleHotkey, _main!.ToggleFromHotkey) is { } toggleError)
+            problems.Add(toggleError);
         _tray!.SetShowHotkey(_settings.ToggleHotkey);
+
+        // Re-register with the (possibly new) combination if a long post is half sent.
+        _hotkeys.Unregister(NextPartHotkeyName);
+        if (UpdateNextPartHotkey() is { } nextError) problems.Add(nextError);
 
         try
         {
-            SpellCheckDictionaries.WriteUserWords(_settings.LoreWords);
+            // Character names count as known words too, so they are not underlined as typos.
+            SpellCheckDictionaries.WriteUserWords(_settings.LoreWords.Concat(_settings.Characters.Select(c => c.Name)));
             _main.RefreshSpellCheck();
         }
         catch (IOException ex)
@@ -106,13 +140,50 @@ public partial class App : Application
         }
 
         _main.ApplyOpacity();
-        _vm.OnSettingsChanged();
+        _vm!.OnSettingsChanged();
 
-        if (problems.Count > 0)
+        if (problems.Count == 0) return true;
+        _vm.SetStatus(problems[0], isError: true);
+        _tray.ShowBalloon("Chattyn", string.Join("\n", problems), isError: true);
+        return false;
+    }
+
+    /// <summary>
+    /// The "copy next part" hotkey exists only while parts of a long post are waiting. A global
+    /// hotkey swallows its key combination in every app, and Ctrl+Alt is how AltGr arrives, so a
+    /// permanently registered Ctrl+Alt+letter would block that AltGr character system-wide.
+    /// </summary>
+    private string? UpdateNextPartHotkey()
+    {
+        if (_hotkeys is null || _vm is null) return null;
+
+        if (!_vm.HasPendingParts)
         {
-            _vm.SetStatus(problems[0], isError: true);
-            _tray.ShowBalloon("Chattyn", string.Join("\n", problems), isError: true);
+            _hotkeys.Unregister(NextPartHotkeyName);
+            return null;
         }
+
+        if (_hotkeys.IsRegistered(NextPartHotkeyName)) return null;
+        var error = _hotkeys.Register(NextPartHotkeyName, _settings.NextPartHotkey, () => _vm.CopyNextPart());
+        return error is null ? null : error + " Use the \"Next part\" button in Chattyn instead.";
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.SelectedCharacter))
+        {
+            // Remember the chosen character right away, not only on exit.
+            if (_hotkeys is not null) SaveSettings();
+            return;
+        }
+
+        if (e.PropertyName != nameof(MainViewModel.HasPendingParts)) return;
+
+        // Deferred so an error lands after the "Part 1/3 copied" status written by the same operation.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (UpdateNextPartHotkey() is { } error) _vm?.SetStatus(error, isError: true);
+        });
     }
 
     private void OpenSettings()
@@ -126,35 +197,37 @@ public partial class App : Application
         var vm = new SettingsViewModel(_settings, ReloadApiKey(), ReloadApiKey);
         _settingsWindow = new SettingsWindow(vm, onSaved: () =>
         {
-            SaveSettings();
-            ApplySettings();
-            if (_apiKey.Found && !_vm.StatusIsError) _vm.SetStatus("Settings saved.");
+            var saved = SaveSettings();
+            // ApplySettings replaces any older error with the current state.
+            if (ApplySettings() && saved) ShowIdleStatus("Settings saved.");
         });
         _settingsWindow.Closed += (_, _) =>
         {
             _settingsWindow = null;
-            if (_apiKey.Found && _vm.Status.StartsWith("No API key", StringComparison.Ordinal))
+            if (ReloadApiKey().Found && _vm!.Status.StartsWith("No API key", StringComparison.Ordinal))
                 _vm.SetStatus("API key found. Ready.");
         };
         _settingsWindow.Show();
         _settingsWindow.Activate();
     }
 
-    private void SaveSettings()
+    private bool SaveSettings()
     {
         try
         {
-            _store.Save(_settings);
+            _store!.Save(_settings);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _vm.SetStatus("Could not save settings: " + ex.Message, isError: true);
+            _vm?.SetStatus("Could not save settings: " + ex.Message, isError: true);
+            return false;
         }
     }
 
     private void Quit()
     {
-        _main.AllowClose = true;
+        if (_main is not null) _main.AllowClose = true;
         Shutdown();
     }
 
@@ -162,9 +235,15 @@ public partial class App : Application
     {
         if (_singleInstance is not null)
         {
-            _main.StoreBounds();
-            SaveSettings();
+            // Only a fully started app has window bounds worth saving; a failed start must not
+            // overwrite the settings file with defaults.
+            if (_main is not null && _hotkeys is not null)
+            {
+                _main.StoreBounds();
+                SaveSettings();
+            }
             _hotkeys?.Dispose();
+            _focus?.Dispose();
             _tray?.Dispose();
             _assistant?.Dispose();
             _singleInstance.ReleaseMutex();
@@ -175,18 +254,22 @@ public partial class App : Application
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
+        LogError(e.Exception);
+        _vm?.SetStatus("Something went wrong: " + e.Exception.Message + " (details in %APPDATA%\\Chattyn\\error.log)", isError: true);
+        e.Handled = true;
+    }
+
+    private static void LogError(Exception exception)
+    {
         try
         {
             Directory.CreateDirectory(SettingsStore.DefaultDirectory);
             File.AppendAllText(Path.Combine(SettingsStore.DefaultDirectory, "error.log"),
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {e.Exception}{Environment.NewLine}{Environment.NewLine}");
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {exception}{Environment.NewLine}{Environment.NewLine}");
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Logging must never take the app down.
         }
-
-        _vm?.SetStatus("Something went wrong: " + e.Exception.Message + " (details in %APPDATA%\\Chattyn\\error.log)", isError: true);
-        e.Handled = true;
     }
 }

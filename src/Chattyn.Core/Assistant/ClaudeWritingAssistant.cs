@@ -58,7 +58,7 @@ public sealed class ClaudeWritingAssistant(Func<string?> apiKeyProvider) : IWrit
 
         if (response.StopReason == "refusal")
         {
-            var category = response.StopDetails?.Category?.ToString();
+            var category = response.StopDetails?.Category?.Raw();
             throw new WritingAssistantException(AssistantErrorKind.Refused,
                 "Claude declined to check this post" + (string.IsNullOrEmpty(category) ? "." : $" ({category})."));
         }
