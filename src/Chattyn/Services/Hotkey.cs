@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Windows.Input;
 using Chattyn.Interop;
 
@@ -6,7 +7,7 @@ namespace Chattyn.Services;
 /// <summary>A global hotkey such as "Ctrl+Alt+Space", parsed into Win32 modifier flags and a virtual key.</summary>
 public sealed record Hotkey(uint Modifiers, uint VirtualKey, string Display)
 {
-    public static bool TryParse(string? text, out Hotkey? hotkey, out string? error)
+    public static bool TryParse(string? text, [NotNullWhen(true)] out Hotkey? hotkey, out string? error)
     {
         hotkey = null;
         error = null;
@@ -51,7 +52,10 @@ public sealed record Hotkey(uint Modifiers, uint VirtualKey, string Display)
                         return false;
                     }
                     key = parsed;
-                    display.Add(raw.Length == 1 ? raw.ToUpperInvariant() : parsed.ToString());
+                    // Key has aliases (PageDown == Next), so show the name the user typed, in enum casing.
+                    display.Add(raw.Length == 1
+                        ? raw.ToUpperInvariant()
+                        : Enum.GetNames<Key>().FirstOrDefault(n => n.Equals(raw, StringComparison.OrdinalIgnoreCase)) ?? raw);
                     break;
             }
         }
@@ -73,10 +77,17 @@ public sealed record Hotkey(uint Modifiers, uint VirtualKey, string Display)
 
     private static bool TryParseKey(string text, out Key key)
     {
+        key = Key.None;
         if (text.Length == 1 && char.IsDigit(text[0]))
             return Enum.TryParse("D" + text, out key);
+        // Enum.TryParse would also accept raw numbers such as "65"; only key names are allowed.
+        if (text.All(char.IsDigit)) return false;
         return Enum.TryParse(text, ignoreCase: true, out key) && key != Key.None;
     }
+
+    /// <summary>True when both describe the same key combination, however they were typed.</summary>
+    public bool SameCombination(Hotkey other) =>
+        Modifiers == other.Modifiers && VirtualKey == other.VirtualKey;
 
     public override string ToString() => Display;
 }

@@ -2,7 +2,6 @@
 using System.Windows.Input;
 using System.Windows.Interop;
 using Chattyn.Core.Settings;
-using Chattyn.Interop;
 using Chattyn.Services;
 using Chattyn.ViewModels;
 
@@ -33,7 +32,6 @@ public partial class MainWindow : Window
         vm.ReturnToGameRequested += (_, _) => ReturnToGame();
         Activated += (_, _) => ApplyOpacity();
         Deactivated += (_, _) => ApplyOpacity();
-        SourceInitialized += (_, _) => HwndSource.FromHwnd(Handle)?.AddHook(WndProc);
         Closing += (_, e) =>
         {
             if (AllowClose) return;
@@ -135,11 +133,19 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // While the character list is open, Enter and Esc belong to the list.
+        if (CharacterBox.IsDropDownOpen) return;
+
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var modifiers = Keyboard.Modifiers;
 
         switch (key)
         {
+            case Key.C when modifiers == ModifierKeys.Alt:
+                _vm.CycleCharacter();
+                e.Handled = true;
+                break;
+
             case Key.Escape when modifiers == ModifierKeys.None:
                 ReturnToGame();
                 e.Handled = true;
@@ -188,22 +194,21 @@ public partial class MainWindow : Window
     private void ToggleExpand_Click(object sender, RoutedEventArgs e)
     {
         if (_expanded) ReturnToGame();
-        else ShowAndFocus(captureForeground: false); // WM_ACTIVATE already remembered the game window
+        else ShowAndFocus(captureForeground: false); // FocusService already knows the game window
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e) => SettingsRequested?.Invoke(this, EventArgs.Empty);
+
+    // After picking a character, typing should continue in the post.
+    private void CharacterBox_DropDownClosed(object? sender, EventArgs e)
+    {
+        InputBox.Focus();
+        Keyboard.Focus(InputBox);
+    }
 
     private void Hide_Click(object sender, RoutedEventArgs e)
     {
         Hide();
         _focus.RestorePrevious();
-    }
-
-    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        // When activated by a mouse click, lParam is the window losing focus (usually WoW).
-        if (msg == NativeMethods.WM_ACTIVATE && (wParam.ToInt64() & 0xFFFF) != NativeMethods.WA_INACTIVE)
-            _focus.Remember(lParam);
-        return IntPtr.Zero;
     }
 }

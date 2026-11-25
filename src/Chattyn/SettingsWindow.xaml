@@ -15,7 +15,8 @@
         <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
             <TextBlock Text="{Binding ValidationError}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Style="{StaticResource FlatButton}" Content="Cancel" IsCancel="True" Margin="0,0,8,0" Padding="12,5" />
+                <!-- IsCancel only closes windows opened with ShowDialog(); this one is modeless, so close in Click. -->
+                <Button Style="{StaticResource FlatButton}" Content="Cancel" IsCancel="True" Click="Cancel_Click" Margin="0,0,8,0" Padding="12,5" />
                 <Button Style="{StaticResource AccentButton}" Content="Save" IsDefault="True" Click="Save_Click" />
             </StackPanel>
         </StackPanel>
@@ -44,16 +45,71 @@
                 </StackPanel>
 
                 <TextBlock Style="{StaticResource SectionLabel}" Text="Languages" />
-                <TextBlock Text="Translate into (comma separated, e.g. Czech, German)" Style="{StaticResource Muted}" />
-                <TextBox Style="{StaticResource FieldBox}" Text="{Binding TranslationLanguages, UpdateSourceTrigger=PropertyChanged}" Margin="0,3,0,8" />
+                <TextBlock Text="Your language (several: comma separated, e.g. Czech, German)" Style="{StaticResource Muted}" />
+                <TextBox Style="{StaticResource FieldBox}" Text="{Binding TranslationLanguages, UpdateSourceTrigger=PropertyChanged}" Margin="0,3,0,3" />
+                <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,8"
+                           Text="Used for three things: the meaning check is shown in it, words or whole posts you write in it are translated to English, and Claude watches for the mistakes its speakers typically make in English." />
                 <TextBlock Text="Explain mistakes in" Style="{StaticResource Muted}" />
                 <TextBox Style="{StaticResource FieldBox}" Text="{Binding ExplanationLanguage, UpdateSourceTrigger=PropertyChanged}" Margin="0,3,0,0" />
 
-                <TextBlock Style="{StaticResource SectionLabel}" Text="Your character" />
-                <TextBlock Text="Character and style notes (who they are, how they speak). Helps the natural version keep their voice." Style="{StaticResource Muted}" />
-                <TextBox Style="{StaticResource FieldBox}" Text="{Binding CharacterNotes, UpdateSourceTrigger=PropertyChanged}"
-                         AcceptsReturn="True" MinHeight="70" Margin="0,3,0,8" />
-                <TextBlock Text="Extra names and lore words, one per line (kept as written and not marked as typos)" Style="{StaticResource Muted}" />
+                <TextBlock Style="{StaticResource SectionLabel}" Text="Your characters (optional)" />
+                <TextBlock Style="{StaticResource Muted}"
+                           Text="Describe who you play, and the natural version is written in that character's voice. Everything is optional and you can write it in your own language. You switch characters in the writing panel (Alt+C)." />
+                <DockPanel Margin="0,6,0,0">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Style="{StaticResource AccentButton}" Content="Add" Command="{Binding AddCharacterCommand}" Margin="8,0,0,0" />
+                        <Button Style="{StaticResource AccentButton}" Content="Duplicate" Command="{Binding DuplicateCharacterCommand}" Margin="6,0,0,0" />
+                        <Button Style="{StaticResource AccentButton}" Content="Delete" Command="{Binding DeleteCharacterCommand}" Margin="6,0,0,0" />
+                    </StackPanel>
+                    <ComboBox x:Name="CharacterList" Style="{StaticResource DarkCombo}" MinHeight="28"
+                              ItemsSource="{Binding Characters}" DisplayMemberPath="DisplayName"
+                              SelectedItem="{Binding SelectedCharacter}" />
+                </DockPanel>
+                <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0"
+                           Visibility="{Binding HasCharacter, Converter={StaticResource InverseBoolToVisibility}}"
+                           Text="No characters yet. Click Add to describe one, or leave this empty for a neutral tone." />
+
+                <StackPanel Margin="0,8,0,0" Visibility="{Binding HasCharacter, Converter={StaticResource BoolToVisibility}}">
+                    <StackPanel DataContext="{Binding SelectedCharacter}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Name" Style="{StaticResource Muted}" />
+                                <TextBox Style="{StaticResource FieldBox}" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Gender (for she / he in emotes)" Style="{StaticResource Muted}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Gender" Content="She"
+                                                 IsChecked="{Binding Gender, Converter={StaticResource EnumEquals}, ConverterParameter=She}" />
+                                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Gender" Content="He"
+                                                 IsChecked="{Binding Gender, Converter={StaticResource EnumEquals}, ConverterParameter=He}" />
+                                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Gender" Content="They"
+                                                 IsChecked="{Binding Gender, Converter={StaticResource EnumEquals}, ConverterParameter=They}" />
+                                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Gender" Content="Not set" Margin="0"
+                                                 IsChecked="{Binding Gender, Converter={StaticResource EnumEquals}, ConverterParameter=Unspecified}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Race and class, e.g. blood elf ranger" Style="{StaticResource Muted}" Margin="0,8,0,0" />
+                        <TextBox Style="{StaticResource FieldBox}" Text="{Binding RaceAndClass, UpdateSourceTrigger=PropertyChanged}" Margin="0,3,0,0" />
+
+                        <TextBlock Text="How they speak. This has the biggest effect on tone. E.g.: formal and cold to strangers, long careful sentences, never swears. Or: gruff, short blunt sentences, dwarven dialect (aye, lad, cannae)." Style="{StaticResource Muted}" Margin="0,8,0,0" />
+                        <TextBox Style="{StaticResource FieldBox}" Text="{Binding SpeechStyle, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" MinHeight="52" Margin="0,3,0,0" />
+
+                        <TextBlock Text="Notes: anything else (temperament, background, how they carry themselves)" Style="{StaticResource Muted}" Margin="0,8,0,0" />
+                        <TextBox Style="{StaticResource FieldBox}" Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" MinHeight="52" Margin="0,3,0,0" />
+                    </StackPanel>
+                </StackPanel>
+
+                <TextBlock Text="Extra names and lore words, one per line (kept as written and not marked as typos). Character names are added automatically." Style="{StaticResource Muted}" Margin="0,10,0,0" />
                 <TextBox Style="{StaticResource FieldBox}" Text="{Binding LoreWords, UpdateSourceTrigger=PropertyChanged}"
                          AcceptsReturn="True" MinHeight="70" Margin="0,3,0,0" />
 

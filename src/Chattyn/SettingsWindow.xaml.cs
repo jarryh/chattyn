@@ -16,6 +16,8 @@ public partial class SettingsWindow : Window
         DataContext = vm;
     }
 
+    private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
+
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         if (!_vm.TryApply()) return;

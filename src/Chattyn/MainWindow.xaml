@@ -28,7 +28,8 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock Text="Chattyn" Margin="12,0,10,0" VerticalAlignment="Center"
+                <TextBlock Text="{Binding HeaderTitle}" Margin="12,0,10,0" VerticalAlignment="Center"
+                           MaxWidth="190" TextTrimming="CharacterEllipsis"
                            Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
 
                 <TextBlock Grid.Column="1" Text="{Binding Status}" VerticalAlignment="Center"
@@ -89,28 +90,36 @@
                              Foreground="{StaticResource AccentBrush}"
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
 
-                <!-- Which version Enter copies -->
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
-                    <TextBlock Text="Send:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="2,0,8,0" />
-                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Natural (Alt+1)"
-                                 IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Natural}" />
-                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Corrected (Alt+2)"
-                                 IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Corrected}" />
-                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Mine (Alt+3)"
-                                 IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Mine}" />
-                </StackPanel>
+                <!-- Which version Enter copies, and which character the post is written for -->
+                <DockPanel Grid.Row="2" Margin="0,8,0,0" LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Left" Text="Send:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="2,0,8,0" />
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                        <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Natural (Alt+1)"
+                                     IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Natural}" />
+                        <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="{Binding SecondChipLabel}"
+                                     IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Corrected}" />
+                        <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Mine (Alt+3)"
+                                     IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Mine}" />
+                    </StackPanel>
+                    <ComboBox x:Name="CharacterBox" DockPanel.Dock="Right" Style="{StaticResource DarkCombo}"
+                              MinWidth="110" MaxWidth="150" VerticalAlignment="Center"
+                              ItemsSource="{Binding Characters}" DisplayMemberPath="Name"
+                              SelectedItem="{Binding SelectedCharacter}"
+                              DropDownClosed="CharacterBox_DropDownClosed"
+                              ToolTip="Character this post is written for (Alt+C switches). Add characters in Settings." />
+                </DockPanel>
 
                 <!-- Empty state -->
                 <TextBlock Grid.Row="3" Margin="2,14,2,0" Style="{StaticResource Muted}" FontSize="12.5"
                            Visibility="{Binding HasResult, Converter={StaticResource InverseBoolToVisibility}}"
-                           Text="Write your post in English above and press Ctrl+Enter. You get a corrected version, a more natural version, short explanations and translations. Pick one and press Enter to copy it, then paste it in WoW chat with Ctrl+V." />
+                           Text="Write your post in English above and press Ctrl+Enter. You get a corrected version, a more natural version, short explanations and translations. Don't know a word? Write it in your own language, or write the whole post in your language, and you get it in English. Pick a version and press Enter to copy it, then paste it in WoW chat with Ctrl+V." />
 
                 <ScrollViewer Grid.Row="3" Margin="0,6,0,0" VerticalScrollBarVisibility="Auto"
                               Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}">
                     <StackPanel>
                         <TextBlock Foreground="{StaticResource ErrorBrush}" FontSize="12" Margin="2,2,2,0" TextWrapping="Wrap"
                                    Visibility="{Binding IsStale, Converter={StaticResource BoolToVisibility}}"
-                                   Text="Your text changed after this check. Ctrl+Enter checks again; Enter in the input box now copies your own text." />
+                                   Text="{Binding StaleMessage}" />
 
                         <StackPanel>
                             <StackPanel.Style>
@@ -129,7 +138,7 @@
                                      SpellCheck.IsEnabled="True" Language="en-US" AcceptsReturn="False"
                                      ToolTip="You can edit this. Enter here copies this version." />
 
-                            <TextBlock Style="{StaticResource SectionLabel}" Text="Corrected" />
+                            <TextBlock Style="{StaticResource SectionLabel}" Text="{Binding SecondLabel}" />
                             <TextBox x:Name="CorrectedBox" Style="{StaticResource FieldBox}"
                                      Text="{Binding Corrected, UpdateSourceTrigger=PropertyChanged}"
                                      SpellCheck.IsEnabled="True" Language="en-US" AcceptsReturn="False"
@@ -164,7 +173,8 @@
                                         <Border Background="{StaticResource SurfaceBrush}" CornerRadius="5" Padding="8,6" Margin="0,0,0,4">
                                             <StackPanel>
                                                 <TextBlock Text="{Binding Language}" Foreground="{StaticResource AccentBrush}" FontSize="12" />
-                                                <TextBlock TextWrapping="Wrap" Margin="0,3,0,0">
+                                                <TextBlock TextWrapping="Wrap" Margin="0,3,0,0"
+                                                           Visibility="{Binding HasOriginalMeaning, Converter={StaticResource BoolToVisibility}}">
                                                     <Run Text="What you wrote: " Foreground="{StaticResource MutedBrush}" FontSize="11.5" />
                                                     <Run Text="{Binding OriginalMeaning, Mode=OneWay}" />
                                                 </TextBlock>
