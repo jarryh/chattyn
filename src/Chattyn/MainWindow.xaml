@@ -1,0 +1,186 @@
+﻿<Window x:Class="Chattyn.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Chattyn.ViewModels"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        Title="Chattyn"
+        Width="540" Height="600" MinWidth="320" MinHeight="38"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False"
+        ResizeMode="CanResizeWithGrip"
+        FontFamily="Segoe UI" FontSize="13"
+        Foreground="{StaticResource TextBrush}"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Border CornerRadius="8" Background="{StaticResource PanelBrush}"
+            BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+        <DockPanel>
+
+            <!-- Header bar: always visible, also the collapsed state -->
+            <Grid DockPanel.Dock="Top" Height="34" Background="Transparent"
+                  MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="Chattyn" Margin="12,0,10,0" VerticalAlignment="Center"
+                           Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
+
+                <TextBlock Grid.Column="1" Text="{Binding Status}" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" FontSize="12">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StatusIsError}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="4,0,6,0">
+                    <Button Style="{StaticResource FlatButton}" Content="Next part"
+                            Foreground="{StaticResource AccentBrush}"
+                            Command="{Binding NextPartCommand}"
+                            Visibility="{Binding HasPendingParts, Converter={StaticResource BoolToVisibility}}"
+                            ToolTip="Copy the next part of a long post" />
+                    <Button x:Name="ExpandButton" Style="{StaticResource FlatButton}" Content="&#xE70D;"
+                            FontFamily="Segoe MDL2 Assets" FontSize="11"
+                            Click="ToggleExpand_Click" ToolTip="Expand / collapse" />
+                    <Button Style="{StaticResource FlatButton}" Content="&#xE713;"
+                            FontFamily="Segoe MDL2 Assets" FontSize="12"
+                            Click="Settings_Click" ToolTip="Settings" />
+                    <Button Style="{StaticResource FlatButton}" Content="&#xE711;"
+                            FontFamily="Segoe MDL2 Assets" FontSize="11"
+                            Click="Hide_Click" ToolTip="Hide to tray (the hotkey brings it back)" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Expanded body -->
+            <Grid x:Name="Body" Margin="10,0,10,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <TextBox x:Name="InputBox" Style="{StaticResource FieldBox}"
+                         Text="{Binding Input, UpdateSourceTrigger=PropertyChanged}"
+                         SpellCheck.IsEnabled="True" Language="en-US"
+                         AcceptsReturn="False" MinHeight="64" MaxHeight="150" FontSize="14" />
+
+                <DockPanel Grid.Row="1" Margin="2,4,2,0">
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding ByteInfo}" Style="{StaticResource Muted}" />
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource Muted}"
+                               Text="Ctrl+Enter check  -  Enter copy  -  Esc back" />
+                    <Border />
+                </DockPanel>
+
+                <ProgressBar Grid.Row="1" Height="2" VerticalAlignment="Top" Margin="0,1,0,0"
+                             IsIndeterminate="True" Background="Transparent" BorderThickness="0"
+                             Foreground="{StaticResource AccentBrush}"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+
+                <!-- Which version Enter copies -->
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Send:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="2,0,8,0" />
+                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Natural (Alt+1)"
+                                 IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Natural}" />
+                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Corrected (Alt+2)"
+                                 IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Corrected}" />
+                    <RadioButton Style="{StaticResource ChoiceChip}" GroupName="Choice" Content="Mine (Alt+3)"
+                                 IsChecked="{Binding Selected, Converter={StaticResource EnumEquals}, ConverterParameter=Mine}" />
+                </StackPanel>
+
+                <!-- Empty state -->
+                <TextBlock Grid.Row="3" Margin="2,14,2,0" Style="{StaticResource Muted}" FontSize="12.5"
+                           Visibility="{Binding HasResult, Converter={StaticResource InverseBoolToVisibility}}"
+                           Text="Write your post in English above and press Ctrl+Enter. You get a corrected version, a more natural version, short explanations and translations. Pick one and press Enter to copy it, then paste it in WoW chat with Ctrl+V." />
+
+                <ScrollViewer Grid.Row="3" Margin="0,6,0,0" VerticalScrollBarVisibility="Auto"
+                              Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibility}}">
+                    <StackPanel>
+                        <TextBlock Foreground="{StaticResource ErrorBrush}" FontSize="12" Margin="2,2,2,0" TextWrapping="Wrap"
+                                   Visibility="{Binding IsStale, Converter={StaticResource BoolToVisibility}}"
+                                   Text="Your text changed after this check. Ctrl+Enter checks again; Enter in the input box now copies your own text." />
+
+                        <StackPanel>
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsStale}" Value="True">
+                                            <Setter Property="Opacity" Value="0.55" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+
+                            <TextBlock Style="{StaticResource SectionLabel}" Text="Natural" />
+                            <TextBox x:Name="NaturalBox" Style="{StaticResource FieldBox}"
+                                     Text="{Binding Natural, UpdateSourceTrigger=PropertyChanged}"
+                                     SpellCheck.IsEnabled="True" Language="en-US" AcceptsReturn="False"
+                                     ToolTip="You can edit this. Enter here copies this version." />
+
+                            <TextBlock Style="{StaticResource SectionLabel}" Text="Corrected" />
+                            <TextBox x:Name="CorrectedBox" Style="{StaticResource FieldBox}"
+                                     Text="{Binding Corrected, UpdateSourceTrigger=PropertyChanged}"
+                                     SpellCheck.IsEnabled="True" Language="en-US" AcceptsReturn="False"
+                                     ToolTip="You can edit this. Enter here copies this version." />
+
+                            <TextBlock Style="{StaticResource SectionLabel}" Text="Notes"
+                                       Visibility="{Binding HasNotes, Converter={StaticResource BoolToVisibility}}" />
+                            <ItemsControl ItemsSource="{Binding Notes}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource SurfaceBrush}" CornerRadius="5" Padding="8,6" Margin="0,0,0,4">
+                                            <StackPanel>
+                                                <TextBlock TextWrapping="Wrap">
+                                                    <Run Text="{Binding KindLabel, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" FontSize="11.5" />
+                                                    <Run Text="  " />
+                                                    <Run Text="{Binding Original, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextDecorations="Strikethrough" />
+                                                    <Run Text="  &#x2192;  " Foreground="{StaticResource MutedBrush}" />
+                                                    <Run Text="{Binding Suggestion, Mode=OneWay}" Foreground="{StaticResource GoodBrush}" />
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Explanation}" TextWrapping="Wrap" Margin="0,3,0,0" FontSize="12.5" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Style="{StaticResource SectionLabel}" Text="Translations"
+                                       Visibility="{Binding HasTranslations, Converter={StaticResource BoolToVisibility}}" />
+                            <ItemsControl ItemsSource="{Binding Translations}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource SurfaceBrush}" CornerRadius="5" Padding="8,6" Margin="0,0,0,4">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Language}" Foreground="{StaticResource AccentBrush}" FontSize="12" />
+                                                <TextBlock TextWrapping="Wrap" Margin="0,3,0,0">
+                                                    <Run Text="What you wrote: " Foreground="{StaticResource MutedBrush}" FontSize="11.5" />
+                                                    <Run Text="{Binding OriginalMeaning, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock TextWrapping="Wrap" Margin="0,3,0,0">
+                                                    <Run Text="Natural version: " Foreground="{StaticResource MutedBrush}" FontSize="11.5" />
+                                                    <Run Text="{Binding NaturalMeaning, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </DockPanel>
+    </Border>
+</Window>
